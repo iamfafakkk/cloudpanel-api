@@ -1696,6 +1696,85 @@ sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${dbPassword}/" .env'`;
       });
     }
   }
+  async safeNginxRestart() {
+    const commands = [
+      // Fail fast di bash
+      "set -euo pipefail",
+
+      // 1) Validate config
+      "nginx -t",
+
+      // 2) Pastikan pidfile ada
+      '[ -f /run/nginx.pid ] || { echo \"pidfile /run/nginx.pid tidak ditemukan\"; exit 1; }',
+
+      // 3) Graceful upgrade: spawn master baru
+      "kill -USR2 \"$(cat /run/nginx.pid)\"",
+
+      // 4) Stop worker lama (kalau oldbin ada)
+      "[ -f /run/nginx.pid.oldbin ] && kill -WINCH \"$(cat /run/nginx.pid.oldbin)\" || true",
+
+      // 5) Napas sebentar
+      "sleep 1",
+
+      // 6) Health-check ke service target (HTTPS langsung, bukan Nginx)
+      //    Sukses jika 2xx/3xx; gagal selain itu
+      "code=$(curl -sS --max-time 8 -o /dev/null -w \"%{http_code}\" https://mikronode.bayarinternet.com/health); case \"$code\" in 2*|3*) echo \"health-check OK: $code\" ;; *) echo \"health-check gagal: $code\"; exit 1 ;; esac",
+
+      // 7) Shutdown old master (kalau ada)
+      "[ -f /run/nginx.pid.oldbin ] && kill -QUIT \"$(cat /run/nginx.pid.oldbin)\" || true",
+
+      // 8) FINAL CLEANUP — shutdown & hapus pidfile oldbin
+      `OLD="$(cat /run/nginx.pid.oldbin 2>/dev/null || echo '')";
+if [ -n "$OLD" ] && ps -p "$OLD" > /dev/null 2>&1; then
+  kill -QUIT "$OLD" || true
+  sleep 2
+  ps -p "$OLD" > /dev/null 2>&1 || { rm -f /run/nginx.pid.oldbin; echo "oldbin cleaned"; }
+else
+  rm -f /run/nginx.pid.oldbin 2>/dev/null || true
+fi`,
+    ];
+
+    const fullCommand = commands.join(" && ");
+
+    return new Promise((resolve, reject) => {
+      exec(fullCommand, { timeout: 180000 }, (error, stdout, stderr) => {
+        if (error) {
+          const formattedError = ResponseUtils.formatError({
+            error: error.message,
+            stderr,
+          });
+
+          const err = new Error(`Nginx safe restart commands failed: ${formattedError}`);
+          err.command = fullCommand;
+          err.exitCode = error.code;
+          err.stdout = stdout;
+          err.stderr = stderr;
+          err.fullOutput = stdout + stderr;
+
+          logger.error(`Nginx safe restart commands failed`, {
+            command: err.command,
+            exitCode: err.exitCode,
+            stdout: err.stdout,
+            stderr: err.stderr,
+          });
+          reject(err);
+          return;
+        }
+
+        const result = {
+          success: true,
+          message: `Nginx safe restart completed successfully`,
+          output: stdout || "Command completed successfully",
+          stderr,
+          command: fullCommand,
+          exitCode: 0,
+        };
+
+        logger.info(`Nginx safe restart completed successfully`, result);
+        resolve(result);
+      });
+    });
+  }
 }
 
 module.exports = new CloudPanelService();

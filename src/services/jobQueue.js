@@ -378,6 +378,18 @@ class JobQueue {
       errorMessage: null,
     };
 
+    const formatNginxError = (payload) => {
+      const detail =
+        payload?.error ??
+        payload?.message ??
+        payload?.stderr ??
+        payload?.stdout ??
+        payload;
+      const text = safeStringify(detail);
+      if (!text) return "Unknown error";
+      return text.trim() || "Unknown error";
+    };
+
     const persist = async (status, message = null, mode = "full") =>
       this.saveSetupProgress(mode, { job, data, setupTracking, status, errorMessage: message });
 
@@ -486,6 +498,35 @@ class JobQueue {
           logger.error(`Laravel setup failed: ${laravelRes?.error}`, { jobId: job.id });
         }
       }
+
+      let nginxRes;
+      try {
+        nginxRes = await cloudpanelService.safeNginxRestart();
+      } catch (nginxError) {
+        const message = formatNginxError(nginxError);
+        logger.error(`Nginx restart failed: ${message}`, {
+          jobId: job.id,
+          command: nginxError?.command,
+          exitCode: nginxError?.exitCode,
+          stdout: nginxError?.stdout,
+          stderr: nginxError?.stderr,
+        });
+        throw new Error(`Nginx restart failed: ${message}`);
+      }
+
+      if (!nginxRes?.success) {
+        const message = formatNginxError(nginxRes);
+        logger.error(`Nginx restart failed: ${message}`, {
+          jobId: job.id,
+          command: nginxRes?.command,
+          exitCode: nginxRes?.exitCode,
+          stdout: nginxRes?.stdout,
+          stderr: nginxRes?.stderr,
+        });
+        throw new Error(`Nginx restart failed: ${message}`);
+      }
+
+      logger.info(`Nginx restart completed`, { jobId: job.id });
 
       // Persist & complete
       const saved = await persist(SETUP_STATUS.COMPLETED);
