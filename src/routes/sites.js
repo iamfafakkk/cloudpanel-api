@@ -2442,6 +2442,159 @@ router.post(
   }
 );
 
+// Route to clear git pack directory for a specific site
+router.post(
+  "/:siteUser/:domainName/delete-git-pack",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const { siteUser, domainName } = req.params;
+
+      if (!siteUser || !domainName) {
+        return res.status(400).json({
+          success: false,
+          message: "Site user and domain name are required",
+        });
+      }
+
+      const safeIdentifierPattern = /^[a-zA-Z0-9._-]+$/;
+      if (
+        !safeIdentifierPattern.test(siteUser) ||
+        !safeIdentifierPattern.test(domainName)
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid site user or domain name",
+        });
+      }
+
+      logger.info(
+        `Delete git pack requested for domain: ${domainName}, user: ${siteUser}`
+      );
+
+      const sitePath = `/home/${siteUser}/htdocs/${domainName}`;
+      const gitPath = `${sitePath}/.git`;
+      const packPath = `${gitPath}/objects/pack`;
+
+      const deletePackCommand = `su - ${siteUser} -c 'if [ ! -d "${sitePath}" ]; then echo "SITE_NOT_FOUND"; elif [ ! -d "${gitPath}" ]; then echo "GIT_NOT_FOUND"; elif [ ! -d "${packPath}" ]; then echo "PACK_NOT_FOUND"; else rm -rf "${packPath}" && mkdir -p "${packPath}" && echo "PACK_DELETED"; fi'`;
+
+      let commandOutput = "";
+      let stderrOutput = "";
+
+      if (isDevelopment) {
+        const sshResult = await executeSshCommand(deletePackCommand);
+        commandOutput = (sshResult.output || sshResult.stdout || "").trim();
+        stderrOutput = (sshResult.stderr || "").trim();
+      } else {
+        const execAsync = promisify(exec);
+        const { stdout, stderr } = await execAsync(deletePackCommand, {
+          timeout: 60000,
+          env: { ...process.env },
+        });
+        commandOutput = (stdout || "").trim();
+        stderrOutput = (stderr || "").trim();
+      }
+
+      if (commandOutput.includes("SITE_NOT_FOUND")) {
+        return res.status(404).json({
+          success: false,
+          message: `Site directory not found: ${sitePath}`,
+          details: {
+            sitePath,
+            gitPath,
+            packPath,
+            stderr: stderrOutput,
+          },
+        });
+      }
+
+      if (commandOutput.includes("GIT_NOT_FOUND")) {
+        return res.status(400).json({
+          success: false,
+          message: `Git repository not found for site: ${sitePath}`,
+          details: {
+            sitePath,
+            gitPath,
+            packPath,
+            stderr: stderrOutput,
+          },
+        });
+      }
+
+      if (commandOutput.includes("PACK_NOT_FOUND")) {
+        return res.status(404).json({
+          success: false,
+          message: `Git pack directory not found: ${packPath}`,
+          details: {
+            sitePath,
+            gitPath,
+            packPath,
+            stderr: stderrOutput,
+          },
+        });
+      }
+
+      if (commandOutput.includes("PACK_DELETED")) {
+        logger.info(
+          `Git pack directory cleared for ${domainName} (${siteUser})`
+        );
+
+        return res.json({
+          success: true,
+          message:
+            "Git pack directory cleared successfully and recreated as an empty folder.",
+          details: {
+            sitePath,
+            gitPath,
+            packPath,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      // Unexpected output - treat as error
+      logger.error(
+        "Unexpected response while deleting git pack directory",
+        {
+          siteUser,
+          domainName,
+          sitePath,
+          packPath,
+          commandOutput,
+          stderrOutput,
+        }
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Unexpected response from delete git pack operation",
+        details: {
+          sitePath,
+          gitPath,
+          packPath,
+          commandOutput,
+          stderrOutput,
+        },
+      });
+    } catch (error) {
+      logger.error(
+        `Failed to delete git pack for ${req.params.domainName}: ${error.message}`,
+        {
+          siteUser: req.params.siteUser,
+          domainName: req.params.domainName,
+          stack: error.stack,
+        }
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Failed to delete git pack directory",
+        error: error.message,
+      });
+    }
+  }
+);
+
 // Batch git pull for completed sites
 router.post("/batch-git-pull", requireAuth, async (req, res) => {
   try {

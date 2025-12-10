@@ -449,10 +449,22 @@
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         <div class="flex flex-col space-y-2">
+                          <!-- Clear Git Pack Button -->
+                          <button onclick="clearGitPack('<%= site.user %>', '<%= site.domain %>')"
+                            data-site-user="<%= site.user %>" data-domain-name="<%= site.domain %>"
+                            class="git-pack-btn inline-flex items-center px-3 py-1 border border-transparent text-xs leading-4 font-medium rounded-md text-red-600 bg-red-50 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors duration-200">
+                            <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5-3h4m-5 0h6m-6 0a1 1 0 00-1 1v1h8V5a1 1 0 00-1-1h-6z">
+                              </path>
+                            </svg>
+                            <span class="git-pack-text">Clear Git Pack</span>
+                          </button>
+
                           <!-- Git Pull Button -->
                           <button onclick="performGitPull('<%= site.user %>', '<%= site.domain %>')"
                             data-site-user="<%= site.user %>" data-domain-name="<%= site.domain %>"
-                            class="inline-flex items-center px-3 py-1 border border-transparent text-xs leading-4 font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200">
+                            class="git-pull-btn inline-flex items-center px-3 py-1 border border-transparent text-xs leading-4 font-medium rounded-md text-blue-700 bg-blue-100 hover:bg-blue-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors duration-200">
                             <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
@@ -659,7 +671,15 @@
 
       // Function to perform git pull for a site
       async function performGitPull(siteUser, domainName) {
-        const gitPullBtn = document.querySelector(`[data-site-user="${siteUser}"][data-domain-name="${domainName}"]`);
+        const gitPullBtn = document.querySelector(
+          `.git-pull-btn[data-site-user="${siteUser}"][data-domain-name="${domainName}"]`
+        );
+
+        if (!gitPullBtn) {
+          showNotification('Git pull action button not found', 'error');
+          return;
+        }
+
         const gitPullText = gitPullBtn.querySelector('.git-pull-text');
         const gitPullIcon = gitPullBtn.querySelector('svg');
 
@@ -714,6 +734,81 @@
           gitPullBtn.classList.remove('opacity-50', 'cursor-not-allowed');
           gitPullIcon.classList.remove('animate-spin');
           gitPullText.textContent = 'Force git pull';
+        }
+      }
+
+      // Function to clear git pack directory for a site
+      async function clearGitPack(siteUser, domainName) {
+        const gitPackBtn = document.querySelector(
+          `.git-pack-btn[data-site-user="${siteUser}"][data-domain-name="${domainName}"]`
+        );
+
+        if (!gitPackBtn) {
+          showNotification('Git pack action button not found', 'error');
+          return;
+        }
+
+        const confirmed = window.confirm(
+          `Hapus folder pack di ${domainName}? Folder akan dibuat ulang dalam keadaan kosong.`
+        );
+
+        if (!confirmed) {
+          return;
+        }
+
+        const gitPackText = gitPackBtn.querySelector('.git-pack-text');
+        const gitPackIcon = gitPackBtn.querySelector('svg');
+
+        gitPackBtn.disabled = true;
+        gitPackBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        if (gitPackIcon) {
+          gitPackIcon.classList.add('animate-spin');
+        }
+        if (gitPackText) {
+          gitPackText.textContent = 'Clearing...';
+        }
+
+        try {
+          showNotification(`Clearing git pack for ${domainName}...`, 'info');
+
+          const response = await fetch(`/sites/${siteUser}/${domainName}/delete-git-pack`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+
+          let result = {};
+          try {
+            result = await response.json();
+          } catch (parseError) {
+            result = { message: 'Unable to parse server response' };
+          }
+
+          if (response.ok && result.success) {
+            showNotification(
+              result.message || `Git pack cleared for ${domainName}`,
+              'success'
+            );
+          } else {
+            const message = result.message || 'Failed to clear git pack directory';
+            showNotification(message, 'error');
+          }
+        } catch (error) {
+          console.error('Error clearing git pack:', error);
+          showNotification(
+            `Failed to clear git pack: ${error.message}`,
+            'error'
+          );
+        } finally {
+          gitPackBtn.disabled = false;
+          gitPackBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+          if (gitPackIcon) {
+            gitPackIcon.classList.remove('animate-spin');
+          }
+          if (gitPackText) {
+            gitPackText.textContent = 'Clear Git Pack';
+          }
         }
       }
 

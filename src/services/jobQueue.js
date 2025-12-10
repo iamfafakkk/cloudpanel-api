@@ -422,11 +422,11 @@ class JobQueue {
         data.databaseUserPassword
       );
       if (!dbResult?.success) {
-        try {
-          await cloudpanelService.deleteSite(data.domainName, true);
-        } catch (cleanupErr) {
-          logger.error(`Cleanup site failed: ${cleanupErr.message}`, { jobId: job.id });
-        }
+        // try {
+        //   await cloudpanelService.deleteSite(data.domainName, true);
+        // } catch (cleanupErr) {
+        //   logger.error(`Cleanup site failed: ${cleanupErr.message}`, { jobId: job.id });
+        // }
         throw new Error(`Database creation failed: ${dbResult?.error || "Unknown"}`);
       }
       setupTracking.databaseCreated = true;
@@ -807,12 +807,21 @@ class JobQueue {
         `git pull origin $(git branch --show-current) 2>&1'`;
       const pullOutput = toText(await run(gitPullCmd, true)).trim();
 
+      // composer install (run for all projects with composer.json)
+      const composerInstallCmd =
+        `su - ${siteUser} -c 'cd "${sitePath}" && ` +
+        `if [ -f "composer.json" ]; then ` +
+        `echo "=== Running composer install ===" && ` +
+        `composer install --no-dev --prefer-dist --optimize-autoloader --quiet 2>&1 && ` +
+        `echo "Composer install completed"; ` +
+        `else echo "No composer.json found, skipping composer install"; fi'`;
+      const composerOutput = toText(await run(composerInstallCmd, true)).trim();
+
       // optimize (laravel)
       const optimizeCmd =
         `su - ${siteUser} -c 'cd "${sitePath}" && ` +
         `if [ -f "artisan" ]; then ` +
         `echo "=== Running Laravel optimizations ===" && ` +
-        `composer install --no-dev --prefer-dist --optimize-autoloader --classmap-authoritative --quiet 2>&1 && ` +
         `php artisan optimize:clear && php artisan migrate --force 2>&1 && ` +
         `echo "Laravel optimizations completed"; ` +
         `else echo "Not a Laravel project, skipping optimizations"; fi'`;
@@ -839,6 +848,7 @@ class JobQueue {
         executionTime: Date.now() - start,
         gitInfo,
         pullOutput,
+        composerOutput,
         optimizationOutput,
         statusAfter,
         timestamp: nowISO(),
